@@ -2,4 +2,4 @@
 # Max Dauber mjd3375
 
 yash: yash.c
-	gcc -o yash yash.c -lreadline -I.
+	gcc -g -Wall -o yash yash.c -lreadline
