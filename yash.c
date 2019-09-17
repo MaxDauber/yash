@@ -54,6 +54,7 @@ struct process * head = NULL;
 struct process * top = NULL;
 
 char * done_procs = NULL;
+int offset = 0;
 
 char * get_input(){
     char * cmd = readline("# ");
@@ -112,13 +113,20 @@ void trim_processes(){
                 if(cur->bg == 1){
                     printf(DONE_F,cur->job_num,BAK_M,DONE,cur->text);
                 }
+                // struct process * temp = cur;
+                // while(temp != NULL){
+                //     temp->job_num--;
+                //     temp = temp->next_process;
+                // }
                 if(cur->prev_process == NULL){
                     head = cur->next_process;
+                    
                 }
                 else{
                     cur->prev_process->next_process = cur->next_process;
                     cur->next_process->prev_process = cur->prev_process;
                 }
+
             }
         }
         if (cur != NULL) cur = cur->next_process;
@@ -128,7 +136,7 @@ void trim_processes(){
 void monitor_jobs(){
     struct process * cur = head;
     while(cur != NULL){
-        if(waitpid(-1 * cur->gpid, NULL, WNOHANG) != 0){
+        if(waitpid(-1 * cur->gpid, NULL, WNOHANG | WUNTRACED) != 0 && cur->state == 0){
             cur->state = 2;
         }
         cur = cur->next_process;
@@ -139,9 +147,8 @@ void monitor_jobs(){
 void send_to_back(){
     if(head->state == 2){
         kill(-1*head->gpid, SIGCONT);
-        head->state = 1;
+        head->state = 0;
     }
-
 }
 
 void bring_to_front(){
@@ -401,7 +408,7 @@ int main(){
         char * cmd = get_input();
         if (!cmd) continue;
         process(cmd);
-        monitor_jobs();
         trim_processes();
+        monitor_jobs();
     }
 }
