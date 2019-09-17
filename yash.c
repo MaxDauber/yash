@@ -34,19 +34,26 @@
 #define RUNNING "Running"
 #define STOPPED "Stopped"
 #define DONE "Done"
+#define CUR_M "+"
+#define BAK_M "-"
+#define GEN_F "[%d]%s %s     %s\n"
+#define DONE_F "[%d]%s %s        %s\n"
 
-typedef struct process{
+
+struct process{
     int gpid;
     int state; // 0/running 1/stopped 2/done
     int job_num;
     char * text;
-    struct process * next_job;
-    struct process * prev_job;
+    struct process * next_process;
+    struct process * prev_process;
     int bg; // 0/no 1/yes
 };
 
 struct process * head = NULL;
 struct process * top = NULL;
+
+char * done_procs = NULL;
 
 char * get_input(){
     char * cmd = readline("# ");
@@ -55,6 +62,8 @@ char * get_input(){
     }
     return cmd; 
 }
+
+
 
 void add_process(char * args, int pid1, int pid2, int background){
     struct process * proc = malloc(sizeof(struct process));
@@ -65,21 +74,65 @@ void add_process(char * args, int pid1, int pid2, int background){
         setpgid(pid2, pid1);
     }
     proc->gpid = pid1;
+    proc->bg = background;
     //if nothing on stack
     if(head == NULL){
+        proc->job_num = 1;
+        proc->next_process = NULL;
+        proc->prev_process = NULL;
         head = proc;
         top = proc;
-        head->prev_job = NULL;
-        proc->job_num = 1;
     }
+    //if something on stack
     else{
-        proc->prev_job = top;
-        top->next_job = proc;
+        proc->prev_process = top;
+        top->next_process = proc;
         proc->job_num = top->job_num + 1;
         top = proc;
     }
-    proc->bg = background;
     
+}
+
+void trim_processes(){
+    struct process * cur = head;
+    while(cur != NULL){
+        //if done and in background
+        if(cur->state == 2){
+            if(cur->next_process == NULL){
+                if(cur->bg == 1){
+                    printf(DONE_F,cur->job_num,CUR_M,DONE,cur->text);
+                }
+                if(cur->prev_process == NULL){
+                    head = NULL;
+                    top = NULL;
+                }else{
+                    cur->prev_process->next_process = NULL;
+                }
+            }else{
+                if(cur->bg == 1){
+                    printf(DONE_F,cur->job_num,BAK_M,DONE,cur->text);
+                }
+                if(cur->prev_process == NULL){
+                    head = cur->next_process;
+                }
+                else{
+                    cur->prev_process->next_process = cur->next_process;
+                    cur->next_process->prev_process = cur->prev_process;
+                }
+            }
+        }
+        if (cur != NULL) cur = cur->next_process;
+    }
+}
+
+void monitor_jobs(){
+    struct process * cur = head;
+    while(cur != NULL){
+        if(waitpid(-1 * cur->gpid, NULL, WNOHANG) != 0){
+            cur->state = 2;
+        }
+        cur = cur->next_process;
+    }
 }
 
 
@@ -92,36 +145,28 @@ void bring_to_front(){
 }
 
 void print_jobs(){
-    if(top == NULL || head == NULL) return;
-    const char * RUN_M = "Running";
-    const char * STOP_M = "Stopped";
-    const char * DONE_M = "Done";
-    const char * CUR_M = "+";
-    const char * BAK_M = "-";
-    const char * GEN_F = "[%d]%s %s     %s\n";
-    const char * DONE_F = "[%d]%s %s        %s\n";
     struct process * cur = head;
     while(cur != NULL){
         if(cur->state == 2){
-            if(cur->next_job ==NULL){
-                printf(DONE_F,cur->job_num,CUR_M,DONE_M,cur->text);
+            if(cur->next_process == NULL){
+                printf(DONE_F,cur->job_num,CUR_M,DONE,cur->text);
             }else{
-                printf(DONE_F,cur->job_num,BAK_M,DONE_M,cur->text);
+                printf(DONE_F,cur->job_num,BAK_M,DONE,cur->text);
             }
         }else if(cur->state == 1){
-            if(cur->next_job ==NULL){
-                printf(GEN_F,cur->job_num,CUR_M,STOP_M,cur->text);
+            if(cur->next_process == NULL){
+                printf(GEN_F,cur->job_num,CUR_M,STOPPED,cur->text);
             }else{
-                printf(GEN_F,cur->job_num,BAK_M,STOP_M,cur->text);
+                printf(GEN_F,cur->job_num,BAK_M,STOPPED,cur->text);
             }
         }else{
-            if(cur->next_job ==NULL){
-                printf(GEN_F,cur->job_num,CUR_M,RUN_M,cur->text);
+            if(cur->next_process == NULL){
+                printf(GEN_F,cur->job_num,CUR_M,RUNNING,cur->text);
             }else{
-                printf(GEN_F,cur->job_num,BAK_M,RUN_M,cur->text);
+                printf(GEN_F,cur->job_num,BAK_M,RUNNING,cur->text);
             }
         }
-        cur = cur->next_job;
+        cur = cur->next_process;
     }
 }
 
@@ -203,6 +248,7 @@ void execute_cmd(char * cmd[], int arg_count, char * args, int bg){
         perror("fork failed");
         // exit(1);
     }else if(pid == 0){
+        //setpgid(0,0);
         set_operators(cmd, arg_count);
         execvp(cmd[0], cmd);
     }
@@ -221,6 +267,7 @@ void execute_pipe(char*cmd1[], int arg_count1, char*cmd2[],
     pipe(pfd);
     cpid1 = fork();
     if (cpid1 == 0){
+        //setpgid(0,0)
         dup2(pfd[1],1);
         close(pfd[0]);
         set_operators(&cmd1[0], arg_count1);
@@ -228,6 +275,7 @@ void execute_pipe(char*cmd1[], int arg_count1, char*cmd2[],
     }
     cpid2 = fork();
     if (cpid2 == 0){
+        //setpgid(0, cpid1)
         dup2(pfd[0],0);
         close(pfd[1]);
         set_operators(&cmd2[0], arg_count2);
@@ -248,13 +296,14 @@ void execute_pipe(char*cmd1[], int arg_count1, char*cmd2[],
 
 void process(char* cmd){
     if (cmd == NULL) return;
+    char *orig = strdup(cmd);
     char * args [MAX_ARGS];
     int arg_count = 0;
     int pipe_address = -1;
     int background = 0;
 
     args[arg_count] = strtok(cmd," ");
-
+    if (args[arg_count] == NULL) return;
     while(args[arg_count] != NULL){
         
         //append next token to command array
@@ -267,13 +316,14 @@ void process(char* cmd){
         }
     }
     args[++arg_count] = NULL;
-
+    
     //check if last character is & in order to send to background
-    if(args[arg_count-2] != NULL && 
-        strcmp(args[arg_count-2],BACKGROUND) == 0){
-        background = 1;
-        args[arg_count - 2] = NULL;
-        }
+    if(arg_count >= 2 && args[arg_count - 2] != NULL && 
+            strcmp(args[arg_count- 2],BACKGROUND) == 0){
+                background = 1;
+                args[arg_count - 2] = NULL;
+    }
+    
 
     if(strcmp(args[0], FG) == 0) {
         bring_to_front();
@@ -311,22 +361,43 @@ void process(char* cmd){
         
         //execute pipe command
         execute_pipe(cmd1, pipe_address, cmd2, 
-            arg_num - pipe_address - 1, cmd, background);
+            arg_num - pipe_address - 1, orig, background);
     }
     else{
-        execute_cmd(args, arg_count, cmd, background);     
+        execute_cmd(args, arg_count, orig, background);     
     } 
 }
 
+void sig_int(){
+    kill(-1 * top->gpid, SIGKILL);
+    if(top->prev_process == NULL){
+        head = NULL;
+        top = NULL;
+    }
+    else{
+        struct process * temp = top->prev_process;
+        temp->next_process = NULL;
+        top = temp;
+    }
+}
+
+void sig_tstp(){
+    head->state = 1;
+    kill(-1*head->gpid, SIGSTOP);
+}
+
 int main(){
-    //signal(SIGTTOU, SIG_IGN);
-    //signal(SIGINT, SIG_IGN);
-    //signal(SIGTSTP, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGINT, &sig_int);
+    signal(SIGTSTP, &sig_tstp);
+
     tcsetpgrp(0,getpid());
 
     while(1) {
         char * cmd = get_input();
         if (!cmd) continue;
         process(cmd);
+        monitor_jobs();
+        trim_processes();
     }
 }
