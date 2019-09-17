@@ -58,7 +58,7 @@ char * done_procs = NULL;
 char * get_input(){
     char * cmd = readline("# ");
     if(!cmd){
-        //exit
+        _exit(0);
     }
     return cmd; 
 }
@@ -137,7 +137,11 @@ void monitor_jobs(){
 
 
 void send_to_back(){
-    printf("rosa parks");
+    if(head->state == 2){
+        kill(-1*head->gpid, SIGCONT);
+        head->state = 1;
+    }
+
 }
 
 void bring_to_front(){
@@ -383,14 +387,14 @@ void sig_int(){
 
 void sig_tstp(){
     head->state = 1;
-    kill(-1*head->gpid, SIGSTOP);
+    kill(-1*head->gpid, SIGTSTP);
 }
 
 int main(){
     signal(SIGTTOU, SIG_IGN);
     signal(SIGINT, &sig_int);
     signal(SIGTSTP, &sig_tstp);
-
+    //signal(SIGCHLD)
     tcsetpgrp(0,getpid());
 
     while(1) {
